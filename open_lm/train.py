@@ -194,23 +194,19 @@ def train_one_epoch(model, data, loss, epoch, step, optimizer, scaler, scheduler
         batch_time_m.update(time.time() - end)
         end = time.time()
 
-        print(f"{i=}| {total_loss=}")
         global_loss_tensor = total_loss.detach().clone()
         if args.world_size > 1:
             dist.all_reduce(global_loss_tensor, op=ReduceOp.AVG)
-        print(f"{i=}| {global_loss_tensor=}")
 
         batch_count = i + 1
         step += 1
 
         # Log outputs for fake inputs to check model outputs across runs.
-        fake_input = torch.ones(1, args.seq_len).int().to(device)
+        fake_input = torch.arange(2048).unsqueeze(0).int().to(device)
         with torch.no_grad():
             fake_output = model(fake_input)[0].squeeze()
-            print(f"{fake_output.shape=}")
             # Get fake top outputs for the last element in the sequence
             fake_top_values, fake_top_inds = torch.topk(fake_output[-1, :], 10)
-            print(f"{fake_top_values.shape=}, {fake_top_inds.shape=}")
 
         if is_master(args) and (
             i % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch or step == total_steps - 1
