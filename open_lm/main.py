@@ -282,6 +282,7 @@ def main(args):
         # # float16 and almost as accurate as float32
         # # This was a default in pytorch until 1.12
         # torch.backends.cuda.matmul.allow_tf32 = True
+        print("Not allowing TF32")
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
