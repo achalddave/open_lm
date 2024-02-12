@@ -278,10 +278,11 @@ def main(args):
     requires_training = args.train_data or args.dataset_type == "synthetic" or args.dataset_manifest is not None
 
     if torch.cuda.is_available():
-        # This enables tf32 on Ampere GPUs which is only 8% slower than
-        # float16 and almost as accurate as float32
-        # This was a default in pytorch until 1.12
-        torch.backends.cuda.matmul.allow_tf32 = True
+        # # This enables tf32 on Ampere GPUs which is only 8% slower than
+        # # float16 and almost as accurate as float32
+        # # This was a default in pytorch until 1.12
+        # torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
 
