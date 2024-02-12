@@ -186,8 +186,23 @@ def save_checkpoint(
     if args.logs and args.logs.lower() != "none" and args.fsdp:
         save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
         with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
+            # print("====================")
+            # print("Weight info at save:")
+            # print("====================")
+            # for l, layer in enumerate(model.layers):
+            #     print(f"{l=}, {layer.attention.in_proj.weight[0, 0]=}")
+            #     if l > 1:
+            #         break
+            # print(f"{model.tok_embeddings.weight.min()=}, {model.tok_embeddings.weight.max()=}")
             cpu_state = model.state_dict()
             optim_state = FSDP.optim_state_dict(model, optimizer)
+        if cpu_state:
+            print(cpu_state.keys())
+            print(f"{cpu_state['tok_embeddings.weight'][0, 0]=}")
+            print(f"{cpu_state['layers.0.attention.in_proj.weight'].max()=}")
+            print(f"{cpu_state['layers.1.attention.in_proj.weight'].max()=}")
+            print(f"{cpu_state['layers.2.attention.in_proj.weight'].max()=}")
+            print(f"{cpu_state['layers.3.attention.in_proj.weight'].max()=}")
     if args.save_logs:
         checkpoint_dict_model = {
             "epoch": completed_epoch,
@@ -425,6 +440,14 @@ def main(args):
         # Optional: Use meta device
         with torch.device("meta" if args.experimental_meta_device and args.fsdp else args.device):
             model = create_model(args)
+
+    print("====================")
+    print("Weight info at init:")
+    print("====================")
+    for l, layer in enumerate(model.layers):
+        print(f"{l=}, {layer.attention.in_proj.weight[0, 0]=}, {layer.attention.in_proj.weight.max()=}")
+    print(f"{model.tok_embeddings.weight.min()=}, {model.tok_embeddings.weight.max()=}")
+
 
     args.vocab_size = model.vocab_size
     args.seq_len = model.seq_len

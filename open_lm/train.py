@@ -194,12 +194,23 @@ def train_one_epoch(model, data, loss, epoch, step, optimizer, scaler, scheduler
         batch_time_m.update(time.time() - end)
         end = time.time()
 
+        print(f"{i=}| {total_loss=}")
         global_loss_tensor = total_loss.detach().clone()
         if args.world_size > 1:
             dist.all_reduce(global_loss_tensor, op=ReduceOp.AVG)
+        print(f"{i=}| {global_loss_tensor=}")
 
         batch_count = i + 1
         step += 1
+
+        # Log outputs for fake inputs to check model outputs across runs.
+        fake_input = torch.ones(1, args.seq_len).int().to(device)
+        with torch.no_grad():
+            fake_output = model(fake_input)[0].squeeze()
+            print(f"{fake_output.shape=}")
+            # Get fake top outputs for the last element in the sequence
+            fake_top_values, fake_top_inds = torch.topk(fake_output[-1, :], 10)
+            print(f"{fake_top_values.shape=}, {fake_top_inds.shape=}")
 
         if is_master(args) and (
             i % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch or step == total_steps - 1
@@ -241,6 +252,17 @@ def train_one_epoch(model, data, loss, epoch, step, optimizer, scaler, scheduler
                 "lr": optimizer.param_groups[0]["lr"],
                 "tokens": (step + 1) * args.global_batch_size * args.seq_len,
             }
+            logging.info(f"{fake_top_inds=}, {fake_top_values=}")
+            log_data.update(
+                {
+                    "fake_top_0_ind": fake_top_inds[0],
+                    "fake_top_0_val": fake_top_values[0],
+                    "fake_top_1_ind": fake_top_inds[1],
+                    "fake_top_1_val": fake_top_values[1],
+                    "fake_top_2_ind": fake_top_inds[2],
+                    "fake_top_2_val": fake_top_values[2],
+                }
+            )
 
             if args.log_logit_mean:
                 log_data["logit_mean"] = logit_m.val
@@ -251,7 +273,7 @@ def train_one_epoch(model, data, loss, epoch, step, optimizer, scaler, scheduler
                     tb_writer.add_scalar(name, val, step)
                 if args.wandb:
                     assert wandb is not None, "Please install wandb."
-                    wandb.log({name: val, "step": step, "tokens": log_data["tokens"]})
+                    wandb.log({name: val, "step": step, "tokens": log_data["tokens"]}, step=step)
 
             # resetting batch / data time meters per log window
             batch_time_m.reset()
