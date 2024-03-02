@@ -81,6 +81,8 @@ _rescan_model_configs()  # initial populate of model config registry
 class Params:
     dim: int = 512
     n_layers: int = 8
+    # Number of query heads per KV head
+    n_query_per_head: int = 1
     n_heads: int = 8
     vocab_size: int = -1
     norm_eps: float = 1e-5
@@ -102,7 +104,7 @@ class Params:
 
 
 def get_pos_embed(args: Params):
-    head_dim = args.dim // args.n_heads
+    head_dim = args.dim // (args.n_heads * args.n_query_per_head)
     if args.positional_embedding_type == "rotary":
         return RotaryWithCast(head_dim, args.seq_len)
     elif args.positional_embedding_type == "llama_rotary":
@@ -118,13 +120,19 @@ def get_pos_embed(args: Params):
 class CustomAttn(nn.Module):
     def __init__(self, layer_id, args: Params):
         super().__init__()
-        self.n_heads = args.n_heads
-        self.head_dim = args.dim // args.n_heads
-        self.in_proj = nn.Linear(args.dim, 3 * args.n_heads * self.head_dim, bias=False)
-        self.out_proj = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
+        self.n_kv_heads = args.n_heads
+        self.n_query_per_head = args.n_query_per_head
+        self.n_query_heads = self.n_query_per_head * self.n_kv_heads
+
+        self.head_dim = args.dim // self.n_query_heads
+        self.in_proj = nn.Linear(args.dim, (self.n_query_heads + 2 * self.n_kv_heads) * self.head_dim, bias=False)
+        self.out_proj = nn.Linear(self.n_query_heads * self.head_dim, args.dim, bias=False)
         self.pos_embed = get_pos_embed(args)
         self.attn_fn = args.attn_func
         self.apply_qk_norm = args.apply_qk_norm
+
+        self.q_size = self.n_query_heads * self.head_dim
+        self.kv_size = self.n_kv_heads * self.head_dim
 
         # initialize norm layers for queries and keys if needed
         self.q_norm = (
@@ -158,14 +166,14 @@ class CustomAttn(nn.Module):
 
     def forward(self, x: torch.Tensor, is_causal=True, past_key_value=None, use_cache=False):
         batchsize, q_len, _ = x.shape
-        queries, keys, vals = self.in_proj(x).chunk(3, dim=-1)
+        queries, keys, vals = self.in_proj(x).split([self.q_size, self.kv_size, self.kv_size], dim=-1)
 
         queries = self.q_norm(queries)
         keys = self.k_norm(keys)
 
-        queries = queries.view(batchsize, q_len, self.n_heads, self.head_dim)
-        keys = keys.view(batchsize, q_len, self.n_heads, self.head_dim)
-        vals = vals.view(batchsize, q_len, self.n_heads, self.head_dim)
+        queries = queries.view(batchsize, q_len, self.n_query_heads, self.head_dim)
+        keys = keys.view(batchsize, q_len, self.n_kv_heads, self.head_dim)
+        vals = vals.view(batchsize, q_len, self.n_kv_heads, self.head_dim)
 
         past_length = 0 if past_key_value is None else past_key_value[0].shape[1]
         queries, keys, vals = self.pos_embed(queries, keys, vals, offset=past_length)
@@ -225,7 +233,6 @@ class GemmaMLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, layer_id, args: Params):
         super().__init__()
-        self.n_heads = args.n_heads
         self.dim = args.dim
 
         self.head_dim = args.dim // args.n_heads
@@ -417,6 +424,7 @@ def create_params(args):
             dim=cfg["hidden_dim"],
             n_layers=cfg["n_layers"],
             n_heads=cfg["n_heads"],
+            n_query_per_head=cfg.get("n_query_per_head", 1),
             seq_len=cfg["seq_len"],
             vocab_size=cfg["vocab_size"],
             post_embed_norm=cfg["post_embed_norm"],
